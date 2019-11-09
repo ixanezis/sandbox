@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import argparse
@@ -11,6 +13,7 @@ import apscheduler
 import apscheduler.schedulers.background
 from apscheduler.executors.pool import ProcessPoolExecutor
 
+import pymongo
 from pymongo import MongoClient
 
 from common import play
@@ -35,7 +38,7 @@ def play_one_game():
     db = client["sandbox"]
     solutions = list(db.solutions.find())
     if len(solutions) < 2:
-        print "Not enough solutions to play"
+        print("Not enough solutions to play")
         return
 
     solutions = random.sample(solutions, 2)
@@ -44,12 +47,14 @@ def play_one_game():
     print("Playing {}".format(binaries))
     winner = play(*binaries)
     print("Winner: {}".format(winner))
-    if winner == -1:
+    if winner == 0:
+        # draw
         solution = solutions[0]["solution"]
         db.results.update_one({"solution": solution}, {"$inc": {"wins.{}".format(0): 1}})
         solution = solutions[1]["solution"]
         db.results.update_one({"solution": solution}, {"$inc": {"wins.{}".format(0): 1}})
     else:
+        assert(winner in (1, 2))
         solution = solutions[0]["solution"]
         db.results.update_one({"solution": solution}, {"$inc": {"wins.{}".format(winner): 1}})
         solution = solutions[1]["solution"]
@@ -65,7 +70,14 @@ def main():
 
     args = parser.parse_args()
 
-    client = MongoClient()
+    client = MongoClient(serverSelectionTimeoutMS=10)
+
+    try:
+        client.server_info()
+    except pymongo.errors.ServerSelectionTimeoutError as err:
+        print("Could not connect to mongodb server: {}".format(err))
+        sys.exit(1)
+
     db = client["sandbox"]
 
     if args.post:
@@ -98,11 +110,15 @@ def main():
         db.results.remove({})
         shutil.rmtree(DIR)
     else:
+        print("Results")
         comment = {}
+        max_length = 30
         for rec in db.solutions.find():
             comment[rec["solution"]] = rec["comment"]
+            max_length = max(max_length, len(rec["comment"]))
+        print("-" * (max_length + 20))
         for rec in db.results.find():
-            print rec["solution"], "\t", rec["wins"], comment[rec["solution"]]
+            print("{:<{max_length}}   {}".format(comment[rec["solution"]], rec["wins"], max_length=max_length))
 
 
 if __name__ == "__main__":
